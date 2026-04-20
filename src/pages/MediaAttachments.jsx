@@ -11,6 +11,9 @@ import {
   FileText,
   X,
   Home,
+  Plus,
+  Save,
+  Loader2,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext.jsx';
 import { generateId } from '../hooks/useLocalStorage.js';
@@ -77,36 +80,76 @@ export default function MediaAttachments() {
   const [copied, setCopied] = useState(false);
   const [previewImage, setPreviewImage] = useState(null);
   const [activeCategory, setActiveCategory] = useState(null);
+  const [multiShotOpen, setMultiShotOpen] = useState(false);
+  const [tempPhotos, setTempPhotos] = useState([]);
+  const [isSaving, setIsSaving] = useState(false);
   const fileInputRef = useRef(null);
   const docInputRef = useRef(null);
 
   const { survey, client } = getSurvey(surveyId);
 
+  // Open multi-shot modal for a category
   const handlePhotoCapture = useCallback((categoryKey) => {
     setActiveCategory(categoryKey);
-    fileInputRef.current?.click();
+    setTempPhotos([]);
+    setMultiShotOpen(true);
+    // Trigger the first capture immediately
+    setTimeout(() => fileInputRef.current?.click(), 100);
   }, []);
 
+  // Add captured photo to tempPhotos (does NOT save to Supabase yet)
   const handleFileSelected = useCallback(async (e) => {
     const file = e.target.files?.[0];
     if (!file || !activeCategory) return;
 
     try {
       const dataUrl = await compressImage(file);
-      addMediaItem(surveyId, 'photos', {
-        id: generateId(),
-        category: activeCategory,
-        name: file.name,
-        data: dataUrl,
-        createdAt: new Date().toISOString(),
-      });
+      setTempPhotos((prev) => [
+        ...prev,
+        {
+          id: generateId(),
+          category: activeCategory,
+          name: file.name,
+          data: dataUrl,
+          createdAt: new Date().toISOString(),
+        },
+      ]);
     } catch (err) {
       console.error('Error processing photo:', err);
     }
 
     e.target.value = '';
+  }, [activeCategory]);
+
+  // Take another photo without closing the modal
+  const handleTakeAnother = useCallback(() => {
+    fileInputRef.current?.click();
+  }, []);
+
+  // Remove a temp photo before saving
+  const handleRemoveTemp = useCallback((photoId) => {
+    setTempPhotos((prev) => prev.filter((p) => p.id !== photoId));
+  }, []);
+
+  // Save all temp photos to the survey and close modal
+  const handleSaveAllPhotos = useCallback(async () => {
+    if (tempPhotos.length === 0) return;
+    setIsSaving(true);
+    for (const photo of tempPhotos) {
+      addMediaItem(surveyId, 'photos', photo);
+    }
+    setIsSaving(false);
+    setTempPhotos([]);
+    setMultiShotOpen(false);
     setActiveCategory(null);
-  }, [surveyId, activeCategory, addMediaItem]);
+  }, [tempPhotos, surveyId, addMediaItem]);
+
+  // Close modal discarding unsaved photos
+  const handleCloseMultiShot = useCallback(() => {
+    setMultiShotOpen(false);
+    setTempPhotos([]);
+    setActiveCategory(null);
+  }, []);
 
   const handleDocUpload = useCallback(async (e) => {
     const file = e.target.files?.[0];
@@ -257,7 +300,7 @@ export default function MediaAttachments() {
             <h2 className="text-base font-bold text-navy-800">Scatta Foto</h2>
           </div>
           <p className="text-sm text-gray-500 mb-4">
-            Seleziona una categoria e scatta la foto
+            Seleziona una categoria per avviare una sessione di scatto multiplo
           </p>
 
           <div className="grid grid-cols-2 gap-3">
@@ -415,6 +458,103 @@ export default function MediaAttachments() {
           </button>
         </div>
       </main>
+
+      {/* Multi-Shot Camera Modal */}
+      {multiShotOpen && (
+        <div className="glass-overlay" onClick={handleCloseMultiShot}>
+          <div
+            className="relative max-w-lg w-full mx-4 animate-scale-in max-h-[90dvh] flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div className="bg-gradient-to-r from-navy-700 to-navy-800 rounded-t-2xl px-5 py-4 flex items-center justify-between">
+              <div>
+                <h3 className="text-white font-bold text-lg">Sessione di Scatto</h3>
+                <p className="text-white/70 text-sm">
+                  {getCategoryLabel(activeCategory)} — {tempPhotos.length} foto
+                </p>
+              </div>
+              <button
+                onClick={handleCloseMultiShot}
+                className="w-10 h-10 rounded-xl bg-white/15 flex items-center justify-center text-white hover:bg-white/25 transition-colors"
+                aria-label="Chiudi sessione"
+              >
+                <X size={22} />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="bg-white flex-1 overflow-y-auto px-5 py-4">
+              {/* Thumbnail Grid */}
+              {tempPhotos.length > 0 ? (
+                <div className="grid grid-cols-3 gap-2 mb-4">
+                  {tempPhotos.map((photo) => (
+                    <div
+                      key={photo.id}
+                      className="relative aspect-square rounded-xl overflow-hidden bg-gray-200 group"
+                    >
+                      <img
+                        src={photo.data}
+                        alt={photo.name}
+                        className="w-full h-full object-cover"
+                      />
+                      <button
+                        onClick={() => handleRemoveTemp(photo.id)}
+                        className="absolute top-1.5 right-1.5 w-7 h-7 rounded-full bg-red-500 text-white flex items-center justify-center shadow-lg transition-transform active:scale-90"
+                        aria-label="Rimuovi foto"
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center py-8 text-gray-400">
+                  <Camera size={40} className="mx-auto mb-3 opacity-40" />
+                  <p className="text-sm">Nessuna foto scattata ancora</p>
+                  <p className="text-xs mt-1">Premi il pulsante qui sotto per iniziare</p>
+                </div>
+              )}
+
+              {/* Take Another Photo Button */}
+              <button
+                onClick={handleTakeAnother}
+                className="w-full min-h-[56px] rounded-xl border-2 border-dashed border-navy-300 bg-navy-50 text-navy-700 font-bold flex items-center justify-center gap-3 transition-all hover:border-navy-400 active:bg-navy-100 active:scale-[0.98] text-base"
+              >
+                <Plus size={24} />
+                Scatta un&apos;altra foto
+              </button>
+            </div>
+
+            {/* Modal Footer — Save Button */}
+            <div className="bg-white rounded-b-2xl px-5 py-4 border-t border-gray-100">
+              <button
+                onClick={handleSaveAllPhotos}
+                disabled={tempPhotos.length === 0 || isSaving}
+                className={`w-full min-h-[52px] rounded-xl font-bold flex items-center justify-center gap-2 text-base transition-all ${
+                  tempPhotos.length === 0
+                    ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                    : isSaving
+                    ? 'bg-emerald-400 text-white cursor-wait'
+                    : 'bg-emerald-500 text-white shadow-lg shadow-emerald-500/25 active:bg-emerald-600 active:scale-[0.98]'
+                }`}
+              >
+                {isSaving ? (
+                  <>
+                    <Loader2 size={20} className="animate-spin" />
+                    Salvataggio...
+                  </>
+                ) : (
+                  <>
+                    <Save size={20} />
+                    Salva {tempPhotos.length} Foto e Continua
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Image Preview Modal */}
       {previewImage && (

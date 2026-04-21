@@ -9,12 +9,14 @@ import {
   AlertCircle,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext.jsx';
+import { useAuth } from '../context/AuthContext.jsx';
 import Header from '../components/ui/Header.jsx';
 import { useState } from 'react';
 
 export default function ClientDetail() {
   const { clientId } = useParams();
   const { getClient, addSurvey, deleteSurvey } = useApp();
+  const { signOut } = useAuth();
   const navigate = useNavigate();
   const [deleteConfirm, setDeleteConfirm] = useState(null);
 
@@ -34,9 +36,15 @@ export default function ClientDetail() {
     );
   }
 
-  const handleNewSurvey = () => {
-    const survey = addSurvey(clientId, 'Sopralluogo APE');
-    navigate(`/survey/${survey.id}`);
+  const handleNewSurvey = async () => {
+    try {
+      const survey = await addSurvey(clientId, 'Sopralluogo APE');
+      navigate(`/survey/${survey.id}`);
+    } catch (err) {
+      if (err.message === 'NOT_AUTHENTICATED') {
+        await signOut();
+      }
+    }
   };
 
   const handleDeleteSurvey = (e, surveyId) => {

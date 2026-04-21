@@ -13,12 +13,18 @@ export default function Dashboard() {
   const [newName, setNewName] = useState('');
   const [deleteConfirm, setDeleteConfirm] = useState(null);
 
-  const handleCreate = () => {
+  const handleCreate = async () => {
     if (!newName.trim()) return;
-    const client = addClient(newName);
-    setNewName('');
-    setModalOpen(false);
-    navigate(`/client/${client.id}`);
+    try {
+      const client = await addClient(newName);
+      setNewName('');
+      setModalOpen(false);
+      navigate(`/client/${client.id}`);
+    } catch (err) {
+      if (err.message === 'NOT_AUTHENTICATED') {
+        await signOut();
+      }
+    }
   };
 
   const handleDelete = (e, clientId) => {

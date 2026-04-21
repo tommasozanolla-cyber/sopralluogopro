@@ -1,58 +1,58 @@
-import { createContext, useContext, useCallback } from 'react';
+import { createContext, useContext, useCallback, useRef, useEffect } from 'react';
 import { useLocalStorage, generateId } from '../hooks/useLocalStorage';
 import { supabase } from '../supabaseClient';
 
 const AppContext = createContext(null);
 
 /**
- * Get the current authenticated user's ID.
+ * Get the current authenticated user's ID via getUser() (server-validated).
+ * Returns null if not logged in or token expired.
  */
-function getUserId() {
-  return supabase.auth.getSession().then(({ data }) => data.session?.user?.id ?? null);
+async function getVerifiedUserId() {
+  const { data: { user }, error } = await supabase.auth.getUser();
+  if (error || !user) return null;
+  return user.id;
 }
 
 /**
  * Sync a survey row to Supabase (fire-and-forget).
  * Media base64 blobs are stripped — only metadata is sent.
- * Includes user_id so RLS policies can filter per-user.
  */
-function syncToSupabase(client, survey) {
-  getUserId().then((userId) => {
-    if (!userId) return;
+function syncToSupabase(userId, client, survey) {
+  if (!userId) return;
 
-    const mediaMeta = {
-      photos: (survey.data.media?.photos || []).map(
-        ({ id, category, name, createdAt }) => ({ id, category, name, createdAt })
-      ),
-      documents: (survey.data.media?.documents || []).map(
-        ({ id, name, type, size, createdAt }) => ({ id, name, type, size, createdAt })
-      ),
-    };
+  const mediaMeta = {
+    photos: (survey.data.media?.photos || []).map(
+      ({ id, category, name, createdAt }) => ({ id, category, name, createdAt })
+    ),
+    documents: (survey.data.media?.documents || []).map(
+      ({ id, name, type, size, createdAt }) => ({ id, name, type, size, createdAt })
+    ),
+  };
 
-    const row = {
-      id: survey.id,
-      user_id: userId,
-      client_id: client.id,
-      client_name: client.name,
-      survey_type: survey.type,
-      created_at: survey.createdAt,
-      last_saved: survey.lastSaved || new Date().toISOString(),
-      data: {
-        generali: survey.data.generali,
-        involucro: survey.data.involucro,
-        zonetermiche: survey.data.zonetermiche,
-        impianti: survey.data.impianti,
-        media: mediaMeta,
-      },
-    };
+  const row = {
+    id: survey.id,
+    user_id: userId,
+    client_id: client.id,
+    client_name: client.name,
+    survey_type: survey.type,
+    created_at: survey.createdAt,
+    last_saved: survey.lastSaved || new Date().toISOString(),
+    data: {
+      generali: survey.data.generali,
+      involucro: survey.data.involucro,
+      zonetermiche: survey.data.zonetermiche,
+      impianti: survey.data.impianti,
+      media: mediaMeta,
+    },
+  };
 
-    supabase
-      .from('sopralluoghi')
-      .upsert(row, { onConflict: 'id' })
-      .then(({ error }) => {
-        if (error) console.warn('[Supabase] sync error:', error.message);
-      });
-  });
+  supabase
+    .from('sopralluoghi')
+    .upsert(row, { onConflict: 'id' })
+    .then(({ error }) => {
+      if (error) console.warn('[Supabase] sync error:', error.message);
+    });
 }
 
 const EMPTY_SURVEY_DATA = {
@@ -97,8 +97,31 @@ const EMPTY_SURVEY_DATA = {
 
 export function AppProvider({ children }) {
   const [clients, setClients] = useLocalStorage('sopralluogo-ape-clients', []);
+  // Cache the verified user ID so sync calls don't each hit the server
+  const userIdRef = useRef(null);
 
-  const addClient = useCallback((name) => {
+  /**
+   * Ensure we have a server-validated user ID.
+   * Throws if the user is not logged in (caught by callers to show error / redirect).
+   */
+  async function requireUserId() {
+    if (userIdRef.current) return userIdRef.current;
+    const uid = await getVerifiedUserId();
+    if (!uid) throw new Error('NOT_AUTHENTICATED');
+    userIdRef.current = uid;
+    return uid;
+  }
+
+  // Fire-and-forget wrapper that obtains userId then syncs
+  function syncSurveyAsync(client, survey) {
+    requireUserId()
+      .then((uid) => syncToSupabase(uid, client, survey))
+      .catch(() => {}); // silent — user will see errors on explicit actions
+  }
+
+  const addClient = useCallback(async (name) => {
+    const userId = await requireUserId();
+
     const newClient = {
       id: generateId(),
       name: name.trim(),
@@ -107,39 +130,36 @@ export function AppProvider({ children }) {
     };
     setClients((prev) => [newClient, ...prev]);
 
-    // Sync: insert client row with user_id for RLS
-    getUserId().then((userId) => {
-      if (!userId) return;
-      supabase
-        .from('clienti')
-        .upsert(
-          { id: newClient.id, user_id: userId, name: newClient.name, created_at: newClient.createdAt },
-          { onConflict: 'id' }
-        )
-        .then(({ error }) => {
-          if (error) console.warn('[Supabase] addClient error:', error.message);
-        });
-    });
+    const { error } = await supabase
+      .from('clienti')
+      .upsert(
+        { id: newClient.id, user_id: userId, name: newClient.name, created_at: newClient.createdAt },
+        { onConflict: 'id' }
+      );
+    if (error) console.warn('[Supabase] addClient error:', error.message);
 
     return newClient;
   }, [setClients]);
 
-  const deleteClient = useCallback((clientId) => {
+  const deleteClient = useCallback(async (clientId) => {
     setClients((prev) => prev.filter((c) => c.id !== clientId));
 
-    // Sync: remove client's surveys then the client itself
-    supabase.from('sopralluoghi').delete().eq('client_id', clientId)
-      .then(() => supabase.from('clienti').delete().eq('id', clientId))
-      .then(({ error }) => {
-        if (error) console.warn('[Supabase] deleteClient error:', error.message);
-      });
+    try {
+      await supabase.from('sopralluoghi').delete().eq('client_id', clientId);
+      const { error } = await supabase.from('clienti').delete().eq('id', clientId);
+      if (error) console.warn('[Supabase] deleteClient error:', error.message);
+    } catch (err) {
+      console.warn('[Supabase] deleteClient error:', err.message);
+    }
   }, [setClients]);
 
   const getClient = useCallback((clientId) => {
     return clients.find((c) => c.id === clientId) || null;
   }, [clients]);
 
-  const addSurvey = useCallback((clientId, type = 'Sopralluogo APE') => {
+  const addSurvey = useCallback(async (clientId, type = 'Sopralluogo APE') => {
+    const userId = await requireUserId();
+
     const newSurvey = {
       id: generateId(),
       type,
@@ -147,15 +167,15 @@ export function AppProvider({ children }) {
       lastSaved: null,
       data: JSON.parse(JSON.stringify(EMPTY_SURVEY_DATA)),
     };
+
     setClients((prev) => {
       const updated = prev.map((c) =>
         c.id === clientId
           ? { ...c, surveys: [newSurvey, ...c.surveys] }
           : c
       );
-      // Sync new survey to Supabase
       const client = updated.find((c) => c.id === clientId);
-      if (client) syncToSupabase(client, newSurvey);
+      if (client) syncToSupabase(userId, client, newSurvey);
       return updated;
     });
     return newSurvey;
@@ -189,16 +209,15 @@ export function AppProvider({ children }) {
             : survey
         ),
       }));
-      // Sync updated survey to Supabase
       for (const client of updated) {
         const survey = client.surveys.find((s) => s.id === surveyId);
-        if (survey) { syncToSupabase(client, survey); break; }
+        if (survey) { syncSurveyAsync(client, survey); break; }
       }
       return updated;
     });
   }, [setClients]);
 
-  const deleteSurvey = useCallback((clientId, surveyId) => {
+  const deleteSurvey = useCallback(async (clientId, surveyId) => {
     setClients((prev) =>
       prev.map((c) =>
         c.id === clientId
@@ -207,14 +226,11 @@ export function AppProvider({ children }) {
       )
     );
 
-    // Sync: remove from Supabase
-    supabase
+    const { error } = await supabase
       .from('sopralluoghi')
       .delete()
-      .eq('id', surveyId)
-      .then(({ error }) => {
-        if (error) console.warn('[Supabase] deleteSurvey error:', error.message);
-      });
+      .eq('id', surveyId);
+    if (error) console.warn('[Supabase] deleteSurvey error:', error.message);
   }, [setClients]);
 
   const addMediaItem = useCallback((surveyId, type, item) => {
@@ -239,7 +255,7 @@ export function AppProvider({ children }) {
       }));
       for (const client of updated) {
         const survey = client.surveys.find((s) => s.id === surveyId);
-        if (survey) { syncToSupabase(client, survey); break; }
+        if (survey) { syncSurveyAsync(client, survey); break; }
       }
       return updated;
     });
@@ -267,11 +283,19 @@ export function AppProvider({ children }) {
       }));
       for (const client of updated) {
         const survey = client.surveys.find((s) => s.id === surveyId);
-        if (survey) { syncToSupabase(client, survey); break; }
+        if (survey) { syncSurveyAsync(client, survey); break; }
       }
       return updated;
     });
   }, [setClients]);
+
+  // Invalidate cached userId on auth changes (login/logout)
+  useEffect(() => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(() => {
+      userIdRef.current = null;
+    });
+    return () => subscription.unsubscribe();
+  }, []);
 
   const value = {
     clients,

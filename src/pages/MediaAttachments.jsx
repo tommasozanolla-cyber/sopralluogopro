@@ -14,10 +14,14 @@ import {
   Plus,
   Save,
   Loader2,
+  FileDown,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext.jsx';
+import { useAuth } from '../context/AuthContext.jsx';
+import { supabase } from '../supabaseClient.js';
 import { generateId } from '../hooks/useLocalStorage.js';
 import Header from '../components/ui/Header.jsx';
+import { generateWordReport } from '../utils/generateWord.js';
 
 const PHOTO_CATEGORIES = [
   { key: 'libretto_caldaia', label: 'Libretto Caldaia' },
@@ -76,6 +80,7 @@ export default function MediaAttachments() {
   const { surveyId } = useParams();
   const navigate = useNavigate();
   const { getSurvey, addMediaItem, removeMediaItem } = useApp();
+  const { user } = useAuth();
   const [deleteConfirm, setDeleteConfirm] = useState(null);
   const [copied, setCopied] = useState(false);
   const [previewImage, setPreviewImage] = useState(null);
@@ -83,6 +88,7 @@ export default function MediaAttachments() {
   const [multiShotOpen, setMultiShotOpen] = useState(false);
   const [tempPhotos, setTempPhotos] = useState([]);
   const [isSaving, setIsSaving] = useState(false);
+  const [generatingWord, setGeneratingWord] = useState(false);
   const fileInputRef = useRef(null);
   const docInputRef = useRef(null);
 
@@ -210,6 +216,27 @@ export default function MediaAttachments() {
       setTimeout(() => setCopied(false), 2000);
     }
   };
+
+  const handleGenerateWord = useCallback(async () => {
+    if (!survey || !client) return;
+    setGeneratingWord(true);
+    try {
+      // Always fetch latest profile before generating
+      let prof = { nome: '', cognome: '', titolo_professionale: '', albo: '', numero_iscrizione: '' };
+      if (user) {
+        const { data } = await supabase
+          .from('profiles')
+          .select('nome, cognome, titolo_professionale, albo, numero_iscrizione')
+          .eq('id', user.id)
+          .single();
+        if (data) prof = data;
+      }
+      await generateWordReport(prof, client.name, survey.data);
+    } catch (err) {
+      console.error('Error generating Word:', err);
+    }
+    setGeneratingWord(false);
+  }, [survey, client, user]);
 
   if (!survey || !client) {
     return (
@@ -433,8 +460,31 @@ export default function MediaAttachments() {
           )}
         </div>
 
-        {/* Final Export Button */}
-        <div className="mt-8">
+        {/* Final Export Buttons */}
+        <div className="mt-8 space-y-3">
+          <button
+            onClick={handleGenerateWord}
+            disabled={generatingWord}
+            className={`w-full min-h-[56px] rounded-xl font-bold text-lg flex items-center justify-center gap-3 transition-all ${
+              generatingWord
+                ? 'bg-navy-400 text-white cursor-wait'
+                : 'bg-navy-700 text-white shadow-lg shadow-navy-700/25 hover:bg-navy-800 active:bg-navy-900 active:scale-[0.98]'
+            }`}
+            id="btn-generate-word"
+          >
+            {generatingWord ? (
+              <>
+                <Loader2 size={22} className="animate-spin" />
+                Generazione in corso...
+              </>
+            ) : (
+              <>
+                <FileDown size={22} />
+                Genera Relazione Word
+              </>
+            )}
+          </button>
+
           <button
             onClick={handleCopyJSON}
             className={`w-full min-h-[48px] rounded-xl font-semibold flex items-center justify-center gap-2 transition-all ${

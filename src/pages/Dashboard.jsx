@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, User, Calendar, FileText, ChevronRight, ClipboardList, Trash2, LogOut } from 'lucide-react';
+import { Plus, User, Calendar, FileText, ChevronRight, ClipboardList, Trash2, LogOut, UserCog } from 'lucide-react';
 import { useApp } from '../context/AppContext.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
 import Modal from '../components/ui/Modal.jsx';
@@ -53,6 +53,14 @@ export default function Dashboard() {
               <h1 className="text-2xl font-extrabold tracking-tight">Sopralluogo APE</h1>
               <p className="text-navy-300 text-sm font-medium truncate">{user?.email}</p>
             </div>
+            <button
+              onClick={() => navigate('/profile')}
+              className="w-10 h-10 flex items-center justify-center rounded-xl hover:bg-white/10 active:bg-white/20 text-white/70 transition-colors"
+              aria-label="Profilo"
+              id="btn-profile"
+            >
+              <UserCog size={20} />
+            </button>
             <button
               onClick={signOut}
               className="w-10 h-10 flex items-center justify-center rounded-xl hover:bg-white/10 active:bg-white/20 text-white/70 transition-colors"

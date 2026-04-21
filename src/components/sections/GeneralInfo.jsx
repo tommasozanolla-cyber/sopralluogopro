@@ -27,6 +27,14 @@ export default function GeneralInfo({ data, onUpdate }) {
   return (
     <>
       <FormField
+        label="Data Sopralluogo"
+        type="date"
+        value={data.dataSopralluogo}
+        onChange={handleChange('dataSopralluogo')}
+        id="field-data-sopralluogo"
+      />
+
+      <FormField
         label="Anno di Costruzione"
         type="number"
         value={data.annoCostruzione}

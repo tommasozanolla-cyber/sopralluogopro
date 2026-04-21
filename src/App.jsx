@@ -5,6 +5,7 @@ import Dashboard from './pages/Dashboard.jsx';
 import ClientDetail from './pages/ClientDetail.jsx';
 import SurveyForm from './pages/SurveyForm.jsx';
 import MediaAttachments from './pages/MediaAttachments.jsx';
+import Profile from './pages/Profile.jsx';
 import { Loader2 } from 'lucide-react';
 
 function App() {
@@ -29,6 +30,7 @@ function App() {
         <Route path="/client/:clientId" element={<ClientDetail />} />
         <Route path="/survey/:surveyId" element={<SurveyForm />} />
         <Route path="/survey/:surveyId/media" element={<MediaAttachments />} />
+        <Route path="/profile" element={<Profile />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </div>

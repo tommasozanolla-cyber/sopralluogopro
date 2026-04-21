@@ -57,6 +57,7 @@ function syncToSupabase(client, survey) {
 
 const EMPTY_SURVEY_DATA = {
   generali: {
+    dataSopralluogo: '',
     annoCostruzione: '',
     comune: '',
     piano: '',
